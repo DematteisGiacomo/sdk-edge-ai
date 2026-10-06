@@ -1,0 +1,22 @@
+/*
+ * Dual-UART host stream on nRF9251 DK:
+ *   uart133 (P1.5/P1.6) → J-Link VCOM0 — application logs (zephyr,console)
+ *   uart132 (P2.4/P2.5) → J-Link VCOM1 — binary viewer (person-det,host-stream-uart)
+ *
+ * Do not use uart120 (P5.2/P5.3) here: those pins are shared with TPIU/coresight on
+ * this board (see nrf9251dk_nrf9251-pinctrl.dtsi tpiu_default).
+ *
+ * Use with conf/static_input_host_dual.conf
+ */
+
+/ {
+	chosen {
+		person-det,host-stream-uart = &uart132;
+	};
+};
+
+&uart132 {
+	status = "okay";
+	current-speed = <115200>;
+	memory-regions = <&cpuapp_dma_region>;
+};

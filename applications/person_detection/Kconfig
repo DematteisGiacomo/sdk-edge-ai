@@ -6,6 +6,48 @@
 
 menu "Person detection application"
 
+config PERSON_DET_STATIC_INPUT
+	bool "Use static tensor input (no ArduCam)"
+	help
+	  Run MCUnet inference on a prefilled input buffer instead of capturing
+	  from an ArduCam Mega. The default tensor is neutral gray (expect
+	  "No detections"). Use this to verify Axon NPU bring-up without SPI
+	  or a level shifter.
+
+config PERSON_DET_STATIC_EMBEDDED_IMAGE
+	bool "Use embedded 128x128 RGB565 static frame"
+	depends on PERSON_DET_STATIC_INPUT
+	default y
+	help
+	  Load src/generated/static_image_rgb565.h (regenerate with
+	  scripts/embed_static_image.py). When disabled, inference uses a
+	  flat gray model input only (no RGB565 payload for host streaming).
+
+config PERSON_DET_HOST_STREAM
+	bool "Stream RGB565 frame + boxes over UART"
+	depends on PERSON_DET_STATIC_INPUT && PERSON_DET_STATIC_EMBEDDED_IMAGE
+	help
+	  Send the same binary protocol as app-axon USB viewer. UART is
+	  zephyr,console unless devicetree sets person-det,host-stream-uart
+	  (see nrf9251 static overlay + conf/static_input_host_dual.conf).
+
+config PERSON_DET_HOST_STREAM_STARTUP_DELAY_MS
+	int "Delay before first stream (ms)"
+	depends on PERSON_DET_HOST_STREAM
+	default 3000
+	help
+	  Time to open the host viewer on the J-Link virtual COM port before
+	  the firmware sends the first binary frame.
+
+config PERSON_DET_HOST_STREAM_PERIOD_MS
+	int "Milliseconds between streamed frames"
+	depends on PERSON_DET_HOST_STREAM
+	default 4500
+	help
+	  A 128x128 RGB565 frame is ~33 KiB on the wire. At 115200 baud that
+	  takes nearly 3 s; keep this period longer than one full UART transfer
+	  so frames do not run back-to-back and corrupt the binary stream.
+
 config SCORE_THRESHOLD
 	int "Model score threshold, in per mille"
 	range 0 1000
@@ -23,7 +65,7 @@ config IOU_THRESHOLD
 config ARDUCAM_MEGA
 	bool
 	select EXPERIMENTAL
-	default y
+	default y if !PERSON_DET_STATIC_INPUT
 	help
 	  [Experimental]
 

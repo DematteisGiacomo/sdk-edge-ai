@@ -8,18 +8,30 @@
 
 #include <assert.h>
 #include <stdint.h>
+#include <string.h>
 
 #include <zephyr/device.h>
 #include <zephyr/drivers/gpio.h>
-#include <zephyr/drivers/video.h>
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
+
+#if !IS_ENABLED(CONFIG_PERSON_DET_STATIC_INPUT)
+#include <zephyr/drivers/video.h>
+#endif
+
+#if IS_ENABLED(CONFIG_PERSON_DET_HOST_STREAM)
+#include "host_stream.h"
+#endif
 
 #include <axon/nrf_axon_platform.h>
 #include <drivers/axon/nrf_axon_driver.h>
 #include <drivers/axon/nrf_axon_nn_infer.h>
 
 #include "generated/nrf_axon_model_person_det_.h"
+
+#if IS_ENABLED(CONFIG_PERSON_DET_STATIC_EMBEDDED_IMAGE)
+#include "generated/static_image_rgb565.h"
+#endif
 
 LOG_MODULE_REGISTER(main);
 
@@ -40,16 +52,25 @@ LOG_MODULE_REGISTER(main);
 static int8_t input_buf[MODEL_WIDTH * MODEL_HEIGHT * 3];
 static int8_t output_buf[NRF_AXON_MODEL_PERSON_DET_PACKED_OUTPUT_SIZE];
 
+#if !IS_ENABLED(CONFIG_PERSON_DET_STATIC_INPUT) || IS_ENABLED(CONFIG_PERSON_DET_STATIC_EMBEDDED_IMAGE)
 static int8_t lut_red_blue[LUT_SIZE_5_BITS];
 static int8_t lut_green[LUT_SIZE_6_BITS];
+#endif
+
+#if IS_ENABLED(CONFIG_PERSON_DET_STATIC_EMBEDDED_IMAGE)
+static uint8_t static_rgb565[FRAME_RGB565_BYTES];
+#endif
 
 static const struct gpio_dt_spec led_capture = GPIO_DT_SPEC_GET(DT_ALIAS(led0), gpios);
 static const struct gpio_dt_spec led_detection = GPIO_DT_SPEC_GET(DT_ALIAS(led1), gpios);
 
 static void capture_timer_expiry(struct k_timer *timer);
-
 static K_TIMER_DEFINE(capture_timer, capture_timer_expiry, NULL);
 static K_SEM_DEFINE(capture_sem, 0, 1);
+
+#if IS_ENABLED(CONFIG_PERSON_DET_HOST_STREAM)
+static uint32_t stream_frame_id;
+#endif
 
 static void capture_timer_expiry(struct k_timer *timer)
 {
@@ -93,6 +114,8 @@ static void prefill_input_buf(const nrf_axon_nn_compiled_model_input_s *in)
 
 	memset(input_buf, gray, sizeof(input_buf));
 }
+
+#if !IS_ENABLED(CONFIG_PERSON_DET_STATIC_INPUT) || IS_ENABLED(CONFIG_PERSON_DET_STATIC_EMBEDDED_IMAGE)
 
 static void prefill_luts(const nrf_axon_nn_compiled_model_input_s *in)
 {
@@ -140,6 +163,23 @@ static void convert_chunk_to_model_input(const uint8_t *chunk_buf, const size_t 
 	}
 }
 
+#endif /* camera or embedded RGB565 path */
+
+#if IS_ENABLED(CONFIG_PERSON_DET_STATIC_EMBEDDED_IMAGE)
+
+static void load_embedded_rgb565_into_model(const nrf_axon_nn_compiled_model_input_s *in)
+{
+	__ASSERT_NO_MSG(STATIC_IMAGE_RGB565_BYTES == FRAME_RGB565_BYTES);
+
+	memcpy(static_rgb565, static_image_rgb565, sizeof(static_rgb565));
+	prefill_input_buf(in);
+	convert_chunk_to_model_input(static_rgb565, 0, (CAM_WIDTH * CAM_HEIGHT));
+}
+
+#endif
+
+#if !IS_ENABLED(CONFIG_PERSON_DET_STATIC_INPUT)
+
 static int capture_one_frame(const struct device *video)
 {
 	size_t total = 0;
@@ -170,6 +210,8 @@ static int capture_one_frame(const struct device *video)
 	return 0;
 }
 
+#endif /* !CONFIG_PERSON_DET_STATIC_INPUT */
+
 static void log_bounding_boxes(const struct detection_box *boxes, const size_t n)
 {
 	for (size_t i = 0; i < n; i++) {
@@ -179,11 +221,71 @@ static void log_bounding_boxes(const struct detection_box *boxes, const size_t n
 	}
 }
 
+static int run_detection(const nrf_axon_nn_compiled_model_s *model, struct detection_box *boxes,
+			   size_t max_boxes, size_t *out_n)
+{
+	nrf_axon_result_e result;
+
+	result = nrf_axon_nn_model_infer_sync(model, input_buf, output_buf);
+	if (result != NRF_AXON_RESULT_SUCCESS) {
+		LOG_ERR("Inference failed (result %d)", result);
+		(void)gpio_pin_set_dt(&led_detection, 0);
+		return -1;
+	}
+
+	const size_t n = decode_output(model, output_buf, boxes, max_boxes);
+
+	if (out_n != NULL) {
+		*out_n = n;
+	}
+
+	if (n > 0) {
+		(void)gpio_pin_set_dt(&led_detection, 1);
+		log_bounding_boxes(boxes, n);
+	} else {
+		(void)gpio_pin_set_dt(&led_detection, 0);
+		LOG_INF("No detections");
+	}
+
+	return 0;
+}
+
+#if IS_ENABLED(CONFIG_PERSON_DET_STATIC_INPUT)
+
+static int static_input_and_detect(const nrf_axon_nn_compiled_model_s *model,
+				     const nrf_axon_nn_compiled_model_input_s *model_inputs)
+{
+	struct detection_box boxes[MAX_BOXES_LOG];
+	size_t n = 0;
+
+	(void)gpio_pin_toggle_dt(&led_capture);
+
+#if IS_ENABLED(CONFIG_PERSON_DET_STATIC_EMBEDDED_IMAGE)
+	load_embedded_rgb565_into_model(model_inputs);
+#else
+	ARG_UNUSED(model_inputs);
+#endif
+
+	if (run_detection(model, boxes, MAX_BOXES_LOG, &n) != 0) {
+		return -1;
+	}
+
+#if IS_ENABLED(CONFIG_PERSON_DET_HOST_STREAM)
+	stream_frame_id++;
+	host_stream_send_rgb565_frame(stream_frame_id, CAM_WIDTH, CAM_HEIGHT, static_rgb565,
+				      FRAME_RGB565_BYTES);
+	host_stream_send_detections(stream_frame_id, MODEL_WIDTH, MODEL_HEIGHT, PAD_LEFT, PAD_TOP,
+				    boxes, n);
+#endif
+
+	return 0;
+}
+
+#else
+
 static int capture_and_detect(const struct device *video, const nrf_axon_nn_compiled_model_s *model)
 {
 	int err;
-	nrf_axon_result_e result;
-
 	struct detection_box boxes[MAX_BOXES_LOG];
 
 	(void)gpio_pin_toggle_dt(&led_capture);
@@ -207,25 +309,10 @@ static int capture_and_detect(const struct device *video, const nrf_axon_nn_comp
 		return -1;
 	}
 
-	result = nrf_axon_nn_model_infer_sync(model, input_buf, output_buf);
-	if (result != NRF_AXON_RESULT_SUCCESS) {
-		LOG_ERR("Inference failed (result %d)", result);
-		(void)gpio_pin_set_dt(&led_detection, 0);
-		return -1;
-	}
-
-	const size_t n = decode_output(model, output_buf, boxes, MAX_BOXES_LOG);
-
-	if (n > 0) {
-		(void)gpio_pin_set_dt(&led_detection, 1);
-		log_bounding_boxes(boxes, n);
-	} else {
-		(void)gpio_pin_set_dt(&led_detection, 0);
-		LOG_INF("No detections");
-	}
-
-	return 0;
+	return run_detection(model, boxes, MAX_BOXES_LOG, NULL);
 }
+
+#endif
 
 int main(void)
 {
@@ -235,6 +322,7 @@ int main(void)
 	const nrf_axon_nn_compiled_model_s *model = &model_person_det;
 	const nrf_axon_nn_compiled_model_input_s *model_inputs = &model->inputs[0];
 
+#if !IS_ENABLED(CONFIG_PERSON_DET_STATIC_INPUT)
 	const struct device *video = DEVICE_DT_GET(DT_NODELABEL(arducam_mega));
 	struct video_buffer *vbufs[2];
 	struct video_format fmt = {.type = VIDEO_BUF_TYPE_INPUT,
@@ -242,6 +330,7 @@ int main(void)
 				   .width = CAM_WIDTH,
 				   .height = CAM_HEIGHT,
 				   .pitch = CAM_WIDTH * 2};
+#endif
 
 	if (led_init(&led_capture) != 0) {
 		return -1;
@@ -250,6 +339,7 @@ int main(void)
 		return -1;
 	}
 
+#if !IS_ENABLED(CONFIG_PERSON_DET_STATIC_INPUT)
 	if (!device_is_ready(video)) {
 		LOG_ERR("Video device not ready");
 		return -1;
@@ -270,6 +360,16 @@ int main(void)
 		vbufs[i]->type = VIDEO_BUF_TYPE_OUTPUT;
 		video_enqueue(video, vbufs[i]);
 	}
+#endif
+
+#if IS_ENABLED(CONFIG_PERSON_DET_HOST_STREAM)
+	err = host_stream_init();
+	if (err != 0) {
+		LOG_ERR("Host stream init failed (err %d)", err);
+		return -1;
+	}
+	k_msleep(CONFIG_PERSON_DET_HOST_STREAM_STARTUP_DELAY_MS);
+#endif
 
 	result = nrf_axon_platform_init();
 	if (result != NRF_AXON_RESULT_SUCCESS) {
@@ -284,12 +384,27 @@ int main(void)
 	}
 
 	prefill_input_buf(model_inputs);
+#if !IS_ENABLED(CONFIG_PERSON_DET_STATIC_INPUT) || IS_ENABLED(CONFIG_PERSON_DET_STATIC_EMBEDDED_IMAGE)
 	prefill_luts(model_inputs);
+#endif
 	decode_init(model);
 
+#if IS_ENABLED(CONFIG_PERSON_DET_STATIC_INPUT)
+#if IS_ENABLED(CONFIG_PERSON_DET_HOST_STREAM)
+	LOG_INF("Person detection static stream (embed image + UART binary)");
+#else
+	LOG_INF("Person detection start (static input, no camera)");
+#endif
+#else
 	LOG_INF("Person detection start");
+#endif
 
+#if IS_ENABLED(CONFIG_PERSON_DET_HOST_STREAM)
+	k_timer_start(&capture_timer, K_NO_WAIT,
+		      K_MSEC(CONFIG_PERSON_DET_HOST_STREAM_PERIOD_MS));
+#else
 	k_timer_start(&capture_timer, K_NO_WAIT, K_MSEC(500));
+#endif
 
 	while (true) {
 		err = k_sem_take(&capture_sem, K_FOREVER);
@@ -297,7 +412,11 @@ int main(void)
 			continue;
 		}
 
+#if IS_ENABLED(CONFIG_PERSON_DET_STATIC_INPUT)
+		err = static_input_and_detect(model, model_inputs);
+#else
 		err = capture_and_detect(video, model);
+#endif
 		if (err) {
 			return -1;
 		}

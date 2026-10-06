@@ -20,5 +20,7 @@ tests:
   applications.person_detection.zdebug:
     platform_allow:
       - nrf54lm20dk/nrf54lm20b/cpuapp
+      - nrf9251dk/nrf9251/cpuapp
     integration_platforms:
       - nrf54lm20dk/nrf54lm20b/cpuapp
+      - nrf9251dk/nrf9251/cpuapp

@@ -1,0 +1,8 @@
+/*
+ * Disable camera SPI when building with conf/static_input.conf
+ * (CONFIG_PERSON_DET_STATIC_INPUT).
+ */
+
+&spi130 {
+	status = "disabled";
+};

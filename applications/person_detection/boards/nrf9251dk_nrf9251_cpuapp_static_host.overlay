@@ -1,0 +1,8 @@
+/*
+ * Single-UART host stream: binary on console (uart133 / J-Link VCOM0).
+ * Use with conf/static_input_host.conf (logging disabled on that port).
+ */
+
+&uart133 {
+	current-speed = <115200>;
+};

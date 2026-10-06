@@ -1,0 +1,20 @@
+/*
+ * nRF9251 DK — person_det static-input smoke test (no ArduCam / SPI).
+ * Use with conf/static_input.conf (CONFIG_PERSON_DET_STATIC_INPUT=y).
+ */
+
+&axon {
+	status = "okay";
+};
+
+&gpio1 {
+	status = "okay";
+};
+
+&gpio2 {
+	status = "okay";
+};
+
+&gpiote130 {
+	status = "okay";
+};

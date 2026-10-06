@@ -1,0 +1,9 @@
+/*
+ * nRF54LM20 + TXS0108E: slow SPI (250 kHz). Do not use 125000 — nrfx returns -EINVAL.
+ * west build -b nrf54lm20dk/nrf54lm20b/cpuapp applications/person_detection -- \
+ *   -DEXTRA_DTC_OVERLAY_FILE=boards/nrf54lm20dk_nrf54lm20b_cpuapp_shifter100k.overlay
+ */
+
+&arducam_mega {
+	spi-max-frequency = <250000>;
+};

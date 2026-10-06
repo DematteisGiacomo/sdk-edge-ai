@@ -1,0 +1,72 @@
+/*
+ * Copyright (c) 2026 Nordic Semiconductor ASA
+ * SPDX-License-Identifier: LicenseRef-Nordic-5-Clause
+ *
+ * ArduCam Mega SPI (same signal order as nRF54LM20 DK overlay where possible).
+ * P1.5/P1.6 are console UART on nRF9251 DK, so MOSI uses P1.8 instead of P1.6.
+ */
+
+&axon {
+	status = "okay";
+};
+
+&gpio1 {
+	status = "okay";
+};
+
+&gpio2 {
+	status = "okay";
+};
+
+&gpiote130 {
+	status = "okay";
+};
+
+&pinctrl {
+	/* Level-shifter bring-up: no MISO pull-down; stronger SCK/MOSI drive. */
+	spi130_default: spi130_default {
+		group1 {
+			psels = <NRF_PSEL(SPIM_SCK, 1, 0)>,
+				<NRF_PSEL(SPIM_MOSI, 1, 8)>;
+			bias-pull-down;
+			nordic,drive-mode = <NRF_DRIVE_E0E1>;
+		};
+		group2 {
+			psels = <NRF_PSEL(SPIM_MISO, 1, 4)>;
+			bias-disable;
+		};
+	};
+
+	spi130_sleep: spi130_sleep {
+		group1 {
+			psels = <NRF_PSEL(SPIM_SCK, 1, 0)>,
+				<NRF_PSEL(SPIM_MOSI, 1, 8)>;
+			bias-pull-down;
+			low-power-enable;
+		};
+		group2 {
+			psels = <NRF_PSEL(SPIM_MISO, 1, 4)>;
+			bias-disable;
+			low-power-enable;
+		};
+	};
+};
+
+&spi130 {
+	compatible = "nordic,nrf-spim";
+	status = "okay";
+	pinctrl-0 = <&spi130_default>;
+	pinctrl-1 = <&spi130_sleep>;
+	pinctrl-names = "default", "sleep";
+	overrun-character = <0x00>;
+	memory-regions = <&cpuapp_dma_region>;
+	cs-gpios = <&gpio1 7 GPIO_ACTIVE_LOW>;
+
+	arducam_mega: arducam-mega@0 {
+		compatible = "nordic,arducam-mega";
+		reg = <0>;
+		/* Through level shifter: >= 125 kHz (nrfx SPIM minimum). Raise when stable. */
+		spi-max-frequency = <250000>;
+		status = "okay";
+	};
+};

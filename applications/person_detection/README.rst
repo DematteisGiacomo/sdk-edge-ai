@@ -33,12 +33,22 @@ The application supports the following development kit:
 .. table-from-sample-yaml::
 
 The application also requires an SPI camera and was tested with `Arducam Mega 5MP (B401) camera <Arducam Mega 5MP_>`_.
-Configure the development kit using `Board Configurator`_ to provide 3.3V to power the camera.
+
+On the nRF54LM20 DK, configure the kit using `Board Configurator`_ so **VDDIO** is **3.3 V** for the camera interface.
+
+On the nRF9251 DK, application GPIO on port P1 is a **1.8 V** domain (``VDD_P1_1V8``).
+The ArduCam Mega uses **3.3 V** SPI logic, so you must use a **bidirectional level shifter** (for example SparkFun TXS0108E).
+Do **not** connect camera SPI directly to P1 or apply 3.3 V to ``1V8IO`` / ``VDD_P1_1V8``.
+
+Step-by-step wiring (Port 1 ``1V8IO``, 3.3 V supply, shifter A/B pins) is in :file:`README.md` in this directory.
 
 Pin mapping
 ===========
 
-See the following table for the camera-to-DK pin mapping:
+See the following tables for the camera-to-DK pin mapping.
+
+nRF54LM20 DK
+============
 
 .. list-table::
    :header-rows: 1
@@ -66,6 +76,16 @@ See the following table for the camera-to-DK pin mapping:
      - ``P1.4``
 
 For detailed pin configuration, refer to the device tree overlay :file:`boards/nrf54lm20dk_nrf54lm20b_cpuapp.overlay` file.
+
+nRF9251 DK
+==========
+
+SPI signals (through a **1.8 V ↔ 3.3 V** level shifter): ``P1.0`` SCK, ``P1.8`` MOSI, ``P1.4`` MISO, ``P1.7`` CS.
+``P1.5`` / ``P1.6`` are console UART — do not use for SPI.
+
+Full wiring (SparkFun TXS0108E, ``1V8IO``, 3.3 V supply vs MIPI/RFGPIO pins): :file:`README.md`.
+
+Devicetree: :file:`boards/nrf9251dk_nrf9251_cpuapp.overlay`.
 
 .. _app_person_detection_ui:
 

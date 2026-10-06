@@ -10,5 +10,9 @@ list(APPEND DTS_ROOT ${CMAKE_CURRENT_SOURCE_DIR}/dts)
 target_sources(app PRIVATE
   src/main.c
   src/postprocessing.c
-  src/drivers/arducam_mega.c
+  src/host_stream.c
 )
+
+if(NOT CONFIG_PERSON_DET_STATIC_INPUT)
+  target_sources(app PRIVATE src/drivers/arducam_mega.c)
+endif()

@@ -32,6 +32,9 @@
 #if IS_ENABLED(CONFIG_PERSON_DET_MODEL_CIFAR10_IC)
 #include "classification.h"
 #include "generated/nrf_axon_model_tinyml_ic_.h"
+#elif IS_ENABLED(CONFIG_PERSON_DET_MODEL_VWW)
+#include "classification.h"
+#include "generated/nrf_axon_model_tinyml_vww_.h"
 #else
 #include "postprocessing.h"
 #include "generated/nrf_axon_model_person_det_.h"
@@ -51,12 +54,17 @@ LOG_MODULE_REGISTER(main);
 #define MODEL_WIDTH       32
 #define MODEL_HEIGHT      32
 #define MODEL_OUTPUT_SIZE NRF_AXON_MODEL_TINYML_IC_PACKED_OUTPUT_SIZE
-/* Model input is raw 0..255 pixel values (quantized as pixel - 128). */
+/* Model input is raw 0..255 pixel values. */
+#define INPUT_PIXEL_SCALE 1.0f
 #define INPUT_GRAY_LEVEL  128.0f
-#define DOWNSCALE         ((CAM_WIDTH) / (MODEL_WIDTH))
-
-BUILD_ASSERT(CAM_WIDTH == DOWNSCALE * MODEL_WIDTH && CAM_HEIGHT == DOWNSCALE * MODEL_HEIGHT,
-	     "Camera frame must be an integer multiple of the model input");
+#elif IS_ENABLED(CONFIG_PERSON_DET_MODEL_VWW)
+#define AXON_MODEL        model_tinyml_vww
+#define MODEL_WIDTH       96
+#define MODEL_HEIGHT      96
+#define MODEL_OUTPUT_SIZE NRF_AXON_MODEL_TINYML_VWW_PACKED_OUTPUT_SIZE
+/* Model input is pixel / 255. */
+#define INPUT_PIXEL_SCALE (1.0f / 255.0f)
+#define INPUT_GRAY_LEVEL  0.5f
 #else
 #define AXON_MODEL        model_person_det
 #define MODEL_WIDTH       160
@@ -84,7 +92,7 @@ static int8_t input_buf[MODEL_WIDTH * MODEL_HEIGHT * 3];
 static int8_t output_buf[MODEL_OUTPUT_SIZE];
 
 #if HAS_RGB565_INPUT
-#if IS_ENABLED(CONFIG_PERSON_DET_MODEL_CIFAR10_IC)
+#if IS_ENABLED(CONFIG_PERSON_DET_MODEL_CLASSIFIER)
 static uint16_t downscale_acc[3][MODEL_WIDTH * MODEL_HEIGHT];
 #else
 static int8_t lut_red_blue[LUT_SIZE_5_BITS];
@@ -160,24 +168,33 @@ static inline uint16_t extract_pixel(const uint8_t *data, const size_t pixel)
 	return (uint16_t)((uint16_t)data[offset] << 8 | data[offset + 1]);
 }
 
-#if IS_ENABLED(CONFIG_PERSON_DET_MODEL_CIFAR10_IC)
+#if IS_ENABLED(CONFIG_PERSON_DET_MODEL_CLASSIFIER)
 
 static size_t frame_width;
-static size_t frame_scale;
+static size_t frame_height;
+static uint8_t col_bin_cnt[MODEL_WIDTH];
+static uint8_t row_bin_cnt[MODEL_HEIGHT];
 
 static int input_frame_begin(uint16_t width, uint16_t height)
 {
-	const size_t scale = width / MODEL_WIDTH;
-
 	/* downscale_acc is uint16_t: at most 16x16 pixels of 255 per bin. */
-	if (scale == 0 || scale > 16 || width != scale * MODEL_WIDTH ||
-	    height != scale * MODEL_HEIGHT) {
+	if (width < MODEL_WIDTH || height < MODEL_HEIGHT || width > 16 * MODEL_WIDTH ||
+	    height > 16 * MODEL_HEIGHT) {
 		return -EINVAL;
 	}
 
 	frame_width = width;
-	frame_scale = scale;
+	frame_height = height;
 	memset(downscale_acc, 0, sizeof(downscale_acc));
+	memset(col_bin_cnt, 0, sizeof(col_bin_cnt));
+	memset(row_bin_cnt, 0, sizeof(row_bin_cnt));
+
+	for (size_t x = 0; x < width; x++) {
+		col_bin_cnt[x * MODEL_WIDTH / width]++;
+	}
+	for (size_t y = 0; y < height; y++) {
+		row_bin_cnt[y * MODEL_HEIGHT / height]++;
+	}
 
 	return 0;
 }
@@ -189,8 +206,8 @@ static void convert_chunk_to_model_input(const uint8_t *chunk_buf, const size_t 
 		const size_t pixel_idx = pixel_start + p;
 		const size_t src_row = pixel_idx / frame_width;
 		const size_t src_col = pixel_idx % frame_width;
-		const size_t dst_offset =
-			(src_row / frame_scale) * MODEL_WIDTH + (src_col / frame_scale);
+		const size_t dst_offset = (src_row * MODEL_HEIGHT / frame_height) * MODEL_WIDTH +
+					  (src_col * MODEL_WIDTH / frame_width);
 
 		const uint16_t pixel = extract_pixel(chunk_buf, p);
 		const uint8_t r5 = (pixel >> 11) & 0x1f;
@@ -205,13 +222,14 @@ static void convert_chunk_to_model_input(const uint8_t *chunk_buf, const size_t 
 
 static void input_frame_end(const nrf_axon_nn_compiled_model_input_s *in)
 {
-	const uint32_t area = frame_scale * frame_scale;
-
 	for (size_t c = 0; c < ARRAY_SIZE(downscale_acc); c++) {
 		for (size_t i = 0; i < ARRAY_SIZE(downscale_acc[0]); i++) {
+			const uint32_t area =
+				row_bin_cnt[i / MODEL_WIDTH] * col_bin_cnt[i % MODEL_WIDTH];
 			const uint32_t avg = (downscale_acc[c][i] + (area / 2)) / area;
 
-			input_buf[c * MODEL_WIDTH * MODEL_HEIGHT + i] = quantize((float)avg, in);
+			input_buf[c * MODEL_WIDTH * MODEL_HEIGHT + i] =
+				quantize((float)avg * INPUT_PIXEL_SCALE, in);
 		}
 	}
 }
@@ -267,7 +285,7 @@ static void convert_chunk_to_model_input(const uint8_t *chunk_buf, const size_t 
 	}
 }
 
-#endif /* CONFIG_PERSON_DET_MODEL_CIFAR10_IC */
+#endif /* CONFIG_PERSON_DET_MODEL_CLASSIFIER */
 
 #endif /* HAS_RGB565_INPUT */
 
@@ -325,7 +343,7 @@ static int capture_one_frame(const struct device *video,
 
 #endif /* !CONFIG_PERSON_DET_STATIC_INPUT */
 
-#if IS_ENABLED(CONFIG_PERSON_DET_MODEL_CIFAR10_IC)
+#if IS_ENABLED(CONFIG_PERSON_DET_MODEL_CLASSIFIER)
 
 static int run_classification(const nrf_axon_nn_compiled_model_s *model,
 			      struct classification_result *res)
@@ -395,7 +413,7 @@ static int run_detection(const nrf_axon_nn_compiled_model_s *model, struct detec
 	return 0;
 }
 
-#endif /* CONFIG_PERSON_DET_MODEL_CIFAR10_IC */
+#endif /* CONFIG_PERSON_DET_MODEL_CLASSIFIER */
 
 #if IS_ENABLED(CONFIG_PERSON_DET_HOST_INPUT)
 
@@ -417,7 +435,7 @@ static int host_input_and_infer(const nrf_axon_nn_compiled_model_s *model,
 
 	LOG_INF("Frame %u (%ux%u) received", frame_id, width, height);
 
-#if IS_ENABLED(CONFIG_PERSON_DET_MODEL_CIFAR10_IC)
+#if IS_ENABLED(CONFIG_PERSON_DET_MODEL_CLASSIFIER)
 	struct classification_result res;
 
 	return run_classification(model, &res);
@@ -433,7 +451,7 @@ static int host_input_and_infer(const nrf_axon_nn_compiled_model_s *model,
 static int static_input_and_detect(const nrf_axon_nn_compiled_model_s *model,
 				     const nrf_axon_nn_compiled_model_input_s *model_inputs)
 {
-#if IS_ENABLED(CONFIG_PERSON_DET_MODEL_CIFAR10_IC)
+#if IS_ENABLED(CONFIG_PERSON_DET_MODEL_CLASSIFIER)
 	struct classification_result res;
 #else
 	struct detection_box boxes[MAX_BOXES_LOG];
@@ -448,7 +466,7 @@ static int static_input_and_detect(const nrf_axon_nn_compiled_model_s *model,
 	ARG_UNUSED(model_inputs);
 #endif
 
-#if IS_ENABLED(CONFIG_PERSON_DET_MODEL_CIFAR10_IC)
+#if IS_ENABLED(CONFIG_PERSON_DET_MODEL_CLASSIFIER)
 	if (run_classification(model, &res) != 0) {
 		return -1;
 	}
@@ -462,7 +480,7 @@ static int static_input_and_detect(const nrf_axon_nn_compiled_model_s *model,
 	stream_frame_id++;
 	host_stream_send_rgb565_frame(stream_frame_id, CAM_WIDTH, CAM_HEIGHT, static_rgb565,
 				      FRAME_RGB565_BYTES);
-#if IS_ENABLED(CONFIG_PERSON_DET_MODEL_CIFAR10_IC)
+#if IS_ENABLED(CONFIG_PERSON_DET_MODEL_CLASSIFIER)
 	host_stream_send_classification(stream_frame_id, (uint8_t)res.class_idx, res.probs,
 					res.class_cnt);
 #else
@@ -479,7 +497,7 @@ static int static_input_and_detect(const nrf_axon_nn_compiled_model_s *model,
 static int capture_and_detect(const struct device *video, const nrf_axon_nn_compiled_model_s *model)
 {
 	int err;
-#if IS_ENABLED(CONFIG_PERSON_DET_MODEL_CIFAR10_IC)
+#if IS_ENABLED(CONFIG_PERSON_DET_MODEL_CLASSIFIER)
 	struct classification_result res;
 #else
 	struct detection_box boxes[MAX_BOXES_LOG];
@@ -506,7 +524,7 @@ static int capture_and_detect(const struct device *video, const nrf_axon_nn_comp
 		return -1;
 	}
 
-#if IS_ENABLED(CONFIG_PERSON_DET_MODEL_CIFAR10_IC)
+#if IS_ENABLED(CONFIG_PERSON_DET_MODEL_CLASSIFIER)
 	return run_classification(model, &res);
 #else
 	return run_detection(model, boxes, MAX_BOXES_LOG, NULL);
@@ -590,7 +608,7 @@ int main(void)
 	}
 
 	prefill_input_buf(model_inputs);
-#if !IS_ENABLED(CONFIG_PERSON_DET_MODEL_CIFAR10_IC)
+#if !IS_ENABLED(CONFIG_PERSON_DET_MODEL_CLASSIFIER)
 #if HAS_RGB565_INPUT
 	prefill_luts(model_inputs);
 #endif

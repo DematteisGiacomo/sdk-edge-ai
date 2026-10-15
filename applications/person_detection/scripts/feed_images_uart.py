@@ -101,27 +101,43 @@ def to_rgb565_be(rgb: np.ndarray) -> bytes:
     return (r | g | b).astype(">u2").tobytes()
 
 
-def resize(rgb: np.ndarray, size: int) -> np.ndarray:
-    if rgb.shape[0] == size and rgb.shape[1] == size:
-        return rgb
+def crop_square(rgb: np.ndarray) -> np.ndarray:
     h, w = rgb.shape[:2]
     side = min(h, w)
     top, left = (h - side) // 2, (w - side) // 2
-    square = rgb[top : top + side, left : left + side]
-    interp = cv2.INTER_AREA if side > size else cv2.INTER_NEAREST
+    return rgb[top : top + side, left : left + side]
+
+
+def resize(rgb: np.ndarray, size: int) -> np.ndarray:
+    square = crop_square(rgb)
+    if square.shape[0] == size:
+        return square
+    interp = cv2.INTER_AREA if square.shape[0] > size else cv2.INTER_NEAREST
     return cv2.resize(square, (size, size), interpolation=interp)
 
 
-def show(window: str, sample: Sample, frame_id: int, sent_rgb: np.ndarray, scale: int) -> None:
-    disp = cv2.resize(sent_rgb, None, fx=scale, fy=scale, interpolation=cv2.INTER_NEAREST)
-    disp = cv2.cvtColor(disp, cv2.COLOR_RGB2BGR)
-    bar = np.zeros((60, disp.shape[1], 3), dtype=np.uint8)
+def show(window: str, sample: Sample, frame_id: int, sent_rgb: np.ndarray, display: int) -> None:
+    """Original (cropped) image at display size, plus a panel with the exact frame sent."""
+    square = crop_square(sample.rgb)
+    interp = cv2.INTER_AREA if square.shape[0] > display else cv2.INTER_CUBIC
+    main = cv2.resize(square, (display, display), interpolation=interp)
+
+    panel_w = display // 2
+    panel = np.zeros((display, panel_w, 3), dtype=np.uint8)
+    thumb = cv2.resize(sent_rgb, (panel_w - 16, panel_w - 16), interpolation=cv2.INTER_NEAREST)
+    panel[30 : 30 + thumb.shape[0], 8 : 8 + thumb.shape[1]] = thumb
+
+    img = cv2.cvtColor(np.hstack([main, panel]), cv2.COLOR_RGB2BGR)
+    cv2.putText(img, f"sent {sent_rgb.shape[1]}x{sent_rgb.shape[0]}", (display + 8, 20),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (200, 200, 200), 1)
+
+    bar = np.zeros((60, img.shape[1], 3), dtype=np.uint8)
     cv2.putText(bar, f"#{frame_id} {sample.name}", (8, 22),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 1)
     if sample.truth is not None:
         cv2.putText(bar, f"truth: {sample.truth}", (8, 48),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 255, 0), 1)
-    cv2.imshow(window, np.vstack([disp, bar]))
+    cv2.imshow(window, np.vstack([img, bar]))
 
 
 def main() -> int:
@@ -130,9 +146,10 @@ def main() -> int:
     ap.add_argument("--port", default="/dev/ttyACM1", help="Input UART (nRF9251 DK: VCOM1)")
     ap.add_argument("--baud", type=int, default=115200)
     ap.add_argument("--rtscts", action=argparse.BooleanOptionalAction, default=False)
-    ap.add_argument("--size", type=int, default=32,
-                    help="Frame size sent to the device (CIFAR-10 model: multiple of 32)")
-    ap.add_argument("--interval", type=float, default=2.0, help="Seconds between images")
+    ap.add_argument("--size", type=int, default=96,
+                    help="Square frame size sent to the device, at least the model input "
+                    "(VWW: 96, CIFAR-10: 32; default 96 works for both)")
+    ap.add_argument("--interval", type=float, default=2.5, help="Seconds between images")
     ap.add_argument("--loop", action="store_true", help="Repeat the image list forever")
     ap.add_argument("--shuffle", action="store_true")
     ap.add_argument("--axon-test-vectors", type=Path, metavar="HEADER")
@@ -141,7 +158,7 @@ def main() -> int:
     ap.add_argument("--count", type=int, default=20, help="Random CIFAR-10 samples to send")
     ap.add_argument("--indices", type=lambda s: [int(v) for v in s.split(",")],
                     help="Comma-separated CIFAR-10 test indices instead of random samples")
-    ap.add_argument("--scale", type=int, default=0, help="Display upscale (default: auto)")
+    ap.add_argument("--display", type=int, default=480, help="Displayed image size in pixels")
     args = ap.parse_args()
 
     samples: list[Sample] = []
@@ -160,7 +177,6 @@ def main() -> int:
         print(f"Cannot open {args.port}: {exc}", file=sys.stderr)
         return 1
 
-    scale = args.scale or max(1, 384 // args.size)
     window = "Image fed to device"
     frame_id = 0
     print(f"Sending {len(samples)} image(s) as {args.size}x{args.size} RGB565 to {args.port} "
@@ -174,7 +190,7 @@ def main() -> int:
             for sample in order:
                 frame_id += 1
                 rgb = resize(sample.rgb, args.size)
-                show(window, sample, frame_id, rgb, scale)
+                show(window, sample, frame_id, rgb, args.display)
                 cv2.waitKey(1)
 
                 t0 = time.monotonic()

@@ -50,6 +50,10 @@ CIFAR10_LABELS = [
     "airplane", "automobile", "bird", "cat", "deer",
     "dog", "frog", "horse", "ship", "truck",
 ]
+LABEL_PRESETS = {
+    "cifar10": CIFAR10_LABELS,
+    "vww": ["non-person", "person"],
+}
 TOP_K = 3
 
 
@@ -147,11 +151,12 @@ def main() -> int:
     ap.add_argument("--scale", type=int, default=6, help="Display upscale factor")
     ap.add_argument(
         "--labels",
-        default=",".join(CIFAR10_LABELS),
-        help="Comma-separated class labels for classification messages (default: CIFAR-10)",
+        default="cifar10",
+        help="Class labels for classification messages: "
+        f"{' | '.join(LABEL_PRESETS)} or a comma-separated list (default: cifar10)",
     )
     args = ap.parse_args()
-    labels = [s.strip() for s in args.labels.split(",")]
+    labels = LABEL_PRESETS.get(args.labels) or [s.strip() for s in args.labels.split(",")]
 
     try:
         ser = serial.Serial(

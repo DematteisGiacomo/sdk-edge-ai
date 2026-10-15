@@ -16,7 +16,7 @@ if(CONFIG_PERSON_DET_HOST_INPUT)
   target_sources(app PRIVATE src/host_input.c)
 endif()
 
-if(CONFIG_PERSON_DET_MODEL_CIFAR10_IC)
+if(CONFIG_PERSON_DET_MODEL_CLASSIFIER)
   target_sources(app PRIVATE src/classification.c)
 else()
   target_sources(app PRIVATE src/postprocessing.c)

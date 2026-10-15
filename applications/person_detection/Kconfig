@@ -23,7 +23,20 @@ config PERSON_DET_MODEL_CIFAR10_IC
 	  Set CONFIG_NRF_AXON_INTERLAYER_BUFFER_SIZE to at least 52224
 	  (see conf/model_cifar10_ic.conf).
 
+config PERSON_DET_MODEL_VWW
+	bool "MLPerf Tiny Visual Wake Words person classification (96x96 input)"
+	help
+	  Run the MLPerf Tiny Visual Wake Words reference model
+	  (MobileNetV1 0.25) compiled for Axon. The frame is area-resampled
+	  to 96x96 and classified as PERSON or NON_PERSON.
+	  Set CONFIG_NRF_AXON_INTERLAYER_BUFFER_SIZE to at least 46080
+	  (see conf/model_vww.conf).
+
 endchoice
+
+config PERSON_DET_MODEL_CLASSIFIER
+	bool
+	default y if PERSON_DET_MODEL_CIFAR10_IC || PERSON_DET_MODEL_VWW
 
 config PERSON_DET_STATIC_INPUT
 	bool "Use static tensor input (no ArduCam)"
@@ -43,8 +56,9 @@ config PERSON_DET_HOST_INPUT
 	  person-det,host-stream-uart UART and run inference on each one.
 	  Results are only written to the application log; nothing is sent
 	  back on the input UART. Requires CONFIG_UART_INTERRUPT_DRIVEN.
-	  With the CIFAR-10 model, the frame can be any multiple of 32x32
-	  up to 512x512; person detection needs 128x128.
+	  Classification models accept any frame from the model input size up
+	  to 16x that size (max 512x512) and bin it down to the model input;
+	  person detection needs 128x128.
 	  Use scripts/feed_images_uart.py on the host.
 
 config PERSON_DET_HOST_INPUT_RX_BUF_SIZE

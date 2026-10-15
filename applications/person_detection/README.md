@@ -246,11 +246,20 @@ The log on VCOM0 should show `Class 1: AUTOMOBILE (...)` with close to 100% (the
 
 ### Feed images from the PC over UART (demo)
 
-With `conf/host_input_dual.conf`, the firmware receives frames on **VCOM1** (RX only) and writes only to the log on **VCOM0**. Frames use the same RGB565 frame message as the viewer stream. With the CIFAR-10 model, any square multiple of 32×32 works (32×32 is about 2 KB, so about 0.2 s at 115200). Person detection needs 128×128.
+With `conf/host_input_dual.conf`, the firmware receives frames on **VCOM1** (RX only) and writes only to the log on **VCOM0**. Frames use the same RGB565 frame message as the viewer stream. Classification models accept any frame from their input size up to 16× that size and bin it down on the device. Person detection needs 128×128.
+
+Pick the model with a second conf file:
+
+| Conf | Model | Input | Classes | App RAM / flash (host input) |
+|---|---|---|---|---|
+| `conf/model_vww.conf` | MLPerf Tiny Visual Wake Words (MobileNetV1 0.25) | 96×96 | person / non-person | 40% / 74% |
+| `conf/model_cifar10_ic.conf` | MLPerf Tiny ResNet-8 | 32×32 | 10 CIFAR-10 objects | 21% / 42% |
+
+The feeder sends 96×96 by default (about 18 KB, so about 1.6 s per image at 115200). This works for both models. Use `--size 32` with CIFAR-10 for faster frames. The window shows the original image next to the exact frame sent to the device.
 
 ```bash
 west build -b nrf9251dk/nrf9251/cpuapp applications/person_detection -- \
-  -DEXTRA_CONF_FILE="conf/host_input_dual.conf;conf/model_cifar10_ic.conf" \
+  -DEXTRA_CONF_FILE="conf/host_input_dual.conf;conf/model_vww.conf" \
   -DDTC_OVERLAY_FILE="boards/nrf9251dk_nrf9251_cpuapp_static_input.overlay;boards/nrf9251dk_nrf9251_cpuapp_static_host_dual.overlay"
 west flash
 ```
@@ -258,7 +267,10 @@ west flash
 Watch the log on VCOM0, then feed images on VCOM1. The script shows each image as it is sent:
 
 ```bash
-# The model's CIFAR-10 test vectors:
+# The VWW model's test vectors (expected: person 60%, person 99%, non-person 99%):
+python3 applications/person_detection/scripts/feed_images_uart.py --port /dev/ttyACM1 \
+  --axon-test-vectors tests/axon/compiled_models/nrf_axon_model_tinyml_vww_test_vectors_.h --loop
+# The CIFAR-10 model's test vectors (build with conf/model_cifar10_ic.conf):
 python3 applications/person_detection/scripts/feed_images_uart.py --port /dev/ttyACM1 \
   --axon-test-vectors tests/axon/compiled_models/nrf_axon_model_tinyml_ic_test_vectors_.h --loop
 # Your own photos (center-cropped and resized to --size):
@@ -268,7 +280,7 @@ python3 applications/person_detection/scripts/feed_images_uart.py --port /dev/tt
   --cifar-test-batch cifar-10-batches-py/test_batch --count 20
 ```
 
-Each frame is logged as `Frame N (32x32) received` followed by `Class K: LABEL (xx.x%)`. Frames that fail the CRC check or have an unsupported size are dropped with a warning.
+Each frame is logged as `Frame N (96x96) received` followed by `Class K: LABEL (xx.x%)`. Frames that fail the CRC check or have an unsupported size are dropped with a warning.
 
 ---
 

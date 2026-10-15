@@ -151,6 +151,42 @@ void host_stream_send_detections(uint32_t frame_id, uint16_t model_w, uint16_t m
 	tx_bytes(crc_buf, sizeof(crc_buf));
 }
 
+void host_stream_send_classification(uint32_t frame_id, uint8_t class_idx, const float *probs,
+				     size_t count)
+{
+	uint8_t hdr[8];
+	uint8_t magic_buf[4];
+	uint8_t crc_buf[4];
+	uint32_t crc;
+
+	if (count > 255) {
+		count = 255;
+	}
+
+	hdr[0] = PDET_STREAM_VERSION;
+	hdr[1] = PDET_STREAM_TYPE_CLASS;
+	le32_put(&hdr[2], frame_id);
+	hdr[6] = class_idx;
+	hdr[7] = (uint8_t)count;
+
+	crc = crc32_ieee(hdr, sizeof(hdr));
+
+	le32_put(magic_buf, PDET_STREAM_MAGIC);
+	tx_bytes(magic_buf, sizeof(magic_buf));
+	tx_bytes(hdr, sizeof(hdr));
+
+	for (size_t i = 0; i < count; i++) {
+		uint8_t p[4];
+
+		float_put(p, probs[i]);
+		crc = crc32_ieee_update(crc, p, sizeof(p));
+		tx_bytes(p, sizeof(p));
+	}
+
+	le32_put(crc_buf, crc);
+	tx_bytes(crc_buf, sizeof(crc_buf));
+}
+
 #else /* !CONFIG_PERSON_DET_HOST_STREAM */
 
 int host_stream_init(void)
@@ -178,6 +214,15 @@ void host_stream_send_detections(uint32_t frame_id, uint16_t model_w, uint16_t m
 	ARG_UNUSED(pad_left);
 	ARG_UNUSED(pad_top);
 	ARG_UNUSED(boxes);
+	ARG_UNUSED(count);
+}
+
+void host_stream_send_classification(uint32_t frame_id, uint8_t class_idx, const float *probs,
+				     size_t count)
+{
+	ARG_UNUSED(frame_id);
+	ARG_UNUSED(class_idx);
+	ARG_UNUSED(probs);
 	ARG_UNUSED(count);
 }
 

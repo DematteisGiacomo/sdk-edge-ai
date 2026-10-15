@@ -1,6 +1,11 @@
 # Copyright (c) 2026 Nordic Semiconductor
 # SPDX-License-Identifier: LicenseRef-Nordic-5-Clause
-"""Binary UART/USB stream parser for person_detection host stream."""
+"""Binary UART/USB stream parser for person_detection host stream.
+
+Classification message (type 0x03):
+  [4B magic] [1B version] [1B type=0x03] [4B frame_id] [1B class_idx] [1B class_cnt]
+  [class_cnt x float32 probability] [4B crc32(version..last probability)]
+"""
 
 from __future__ import annotations
 
@@ -14,14 +19,26 @@ MAGIC = b"\xa5\x5a\x34\x12"
 VERSION = 1
 TYPE_FRAME = 0x01
 TYPE_DETECT = 0x02
+TYPE_CLASS = 0x03
 
 FRAME_HDR_SIZE = 18
 DETECT_HDR_SIZE = 19
 BOX_SIZE = 21
+CLASS_HDR_SIZE = 12
+MAX_CLASSES = 255
 MAX_FRAME_PAYLOAD = 128 * 128 * 2
 MAX_DETECT_BOXES = 32
 # One full frame (~33 KiB) plus detect message headroom
 MAX_PARSER_BUF = 70000
+
+
+def encode_frame(frame_id: int, width: int, height: int, rgb565_be: bytes) -> bytes:
+    """Build a frame message (type 0x01), e.g. to send to firmware with PERSON_DET_HOST_INPUT."""
+    if len(rgb565_be) != width * height * 2:
+        raise ValueError("payload must be width * height * 2 bytes")
+    hdr = MAGIC + struct.pack("<BBHHII", VERSION, TYPE_FRAME, width, height, len(rgb565_be),
+                              frame_id & 0xFFFFFFFF)
+    return hdr + rgb565_be + struct.pack("<I", zlib.crc32(rgb565_be) & 0xFFFFFFFF)
 
 
 @dataclass
@@ -52,6 +69,13 @@ class DetectionData:
     boxes: list[DetBox] = field(default_factory=list)
 
 
+@dataclass
+class ClassificationData:
+    frame_id: int
+    class_idx: int
+    probs: list[float] = field(default_factory=list)
+
+
 class StreamParser:
     def __init__(self) -> None:
         self._buf = bytearray()
@@ -59,6 +83,7 @@ class StreamParser:
         self._tail = bytearray()
         self.frames: deque[FrameData] = deque(maxlen=4)
         self.detections: deque[DetectionData] = deque(maxlen=8)
+        self.classifications: deque[ClassificationData] = deque(maxlen=8)
         self.stats = {
             "bytes_rx": 0,
             "magic_hits": 0,
@@ -67,6 +92,8 @@ class StreamParser:
             "frames_bad_len": 0,
             "dets_ok": 0,
             "dets_crc_err": 0,
+            "class_ok": 0,
+            "class_crc_err": 0,
             "resync": 0,
             "buf_trim": 0,
         }
@@ -123,6 +150,9 @@ class StreamParser:
                     return
             elif msg_type == TYPE_DETECT:
                 if not self._try_parse_detection():
+                    return
+            elif msg_type == TYPE_CLASS:
+                if not self._try_parse_classification():
                     return
             else:
                 del self._buf[:1]
@@ -202,5 +232,34 @@ class StreamParser:
             )
         )
         self.stats["dets_ok"] += 1
+        del self._buf[:total]
+        return True
+
+    def _try_parse_classification(self) -> bool:
+        if len(self._buf) < CLASS_HDR_SIZE:
+            return False
+
+        _magic, _ver, _mtype, fid, idx, cnt = struct.unpack_from("<IBBIBB", self._buf, 0)
+
+        if cnt == 0 or idx >= cnt:
+            del self._buf[:1]
+            return True
+
+        total = CLASS_HDR_SIZE + cnt * 4 + 4
+        if len(self._buf) < total:
+            return False
+
+        crc_payload = bytes(self._buf[4 : total - 4])
+        crc_expect = struct.unpack_from("<I", self._buf, total - 4)[0]
+        crc_got = zlib.crc32(crc_payload) & 0xFFFFFFFF
+
+        if crc_got != crc_expect:
+            self.stats["class_crc_err"] += 1
+            del self._buf[:total]
+            return True
+
+        probs = list(struct.unpack_from(f"<{cnt}f", self._buf, CLASS_HDR_SIZE))
+        self.classifications.append(ClassificationData(frame_id=fid, class_idx=idx, probs=probs))
+        self.stats["class_ok"] += 1
         del self._buf[:total]
         return True

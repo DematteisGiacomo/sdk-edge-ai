@@ -16,6 +16,7 @@
 #define PDET_STREAM_VERSION     1
 #define PDET_STREAM_TYPE_FRAME  0x01
 #define PDET_STREAM_TYPE_DETECT 0x02
+#define PDET_STREAM_TYPE_CLASS  0x03
 
 int host_stream_init(void);
 
@@ -25,3 +26,6 @@ void host_stream_send_rgb565_frame(uint32_t frame_id, uint16_t width, uint16_t h
 void host_stream_send_detections(uint32_t frame_id, uint16_t model_w, uint16_t model_h,
 				 uint16_t pad_left, uint16_t pad_top,
 				 const struct detection_box *boxes, size_t count);
+
+void host_stream_send_classification(uint32_t frame_id, uint8_t class_idx, const float *probs,
+				     size_t count);

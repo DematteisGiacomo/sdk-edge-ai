@@ -1,11 +1,16 @@
 #!/usr/bin/env python3
 # Copyright (c) 2026 Nordic Semiconductor
 # SPDX-License-Identifier: LicenseRef-Nordic-5-Clause
-"""Embed a 128x128 RGB565 BE frame for PERSON_DET static-input builds."""
+"""Embed a 128x128 RGB565 BE frame for PERSON_DET static-input builds.
+
+The source can be a photo, a neutral gray placeholder, or an int8 test input vector
+from a compiled Axon model header (e.g. the CIFAR-10 test images of tinyml_ic).
+"""
 
 from __future__ import annotations
 
 import argparse
+import re
 import sys
 from pathlib import Path
 
@@ -30,6 +35,36 @@ def load_rgb888(path: Path):
     img = Image.open(path).convert("RGB")
     img = img.resize((CAM_W, CAM_H), Image.Resampling.LANCZOS)
     return img.load()
+
+
+def load_axon_test_vector(header: Path, index: int) -> list[list[tuple[int, int, int]]]:
+    """Read an int8 [3][H][W] Axon test input vector (pixel - 128), upscale to CAM_W x CAM_H."""
+    text = header.read_text(encoding="utf-8")
+    m = re.search(
+        rf"_test_input_vector_{index}\[3\]\[(\d+)\]\[(\d+)\]\s*=\s*\{{(.*?)\}};",
+        text,
+        re.DOTALL,
+    )
+    if m is None:
+        raise SystemExit(f"test_input_vector_{index}[3][H][W] not found in {header}")
+
+    h, w = int(m.group(1)), int(m.group(2))
+    vals = [int(v) for v in re.findall(r"-?\d+", m.group(3))]
+    if len(vals) != 3 * h * w:
+        raise SystemExit(f"expected {3 * h * w} values, got {len(vals)}")
+    if CAM_W % w or CAM_H % h:
+        raise SystemExit(f"{w}x{h} does not divide {CAM_W}x{CAM_H}")
+
+    sx, sy = CAM_W // w, CAM_H // h
+    plane = h * w
+    rows = []
+    for y in range(CAM_H):
+        row = []
+        for x in range(CAM_W):
+            i = (y // sy) * w + (x // sx)
+            row.append(tuple(vals[c * plane + i] + 128 for c in range(3)))
+        rows.append(row)
+    return rows
 
 
 def write_header(out_path: Path, pixels_hi_lo: list[tuple[int, int]]) -> None:
@@ -77,11 +112,24 @@ def main() -> int:
         type=Path,
         default=Path(__file__).resolve().parent.parent / "src/generated/static_image_rgb565.h",
     )
+    ap.add_argument(
+        "--axon-test-vector",
+        metavar="HEADER:INDEX",
+        help="Use test_input_vector_INDEX from a compiled Axon model header, "
+        "e.g. tests/axon/compiled_models/nrf_axon_model_tinyml_ic_test_vectors_.h:1",
+    )
     args = ap.parse_args()
 
     pixels: list[tuple[int, int]] = []
 
-    if args.image is None:
+    if args.axon_test_vector is not None:
+        header, _, index = args.axon_test_vector.rpartition(":")
+        if not header or not index.isdigit():
+            raise SystemExit("--axon-test-vector expects HEADER:INDEX")
+        for row in load_axon_test_vector(Path(header), int(index)):
+            for r, g, b in row:
+                pixels.append(rgb_to_rgb565_be(r, g, b))
+    elif args.image is None:
         for _ in range(CAM_W * CAM_H):
             pixels.append(rgb_to_rgb565_be(128, 128, 128))
     else:

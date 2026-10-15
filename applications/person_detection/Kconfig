@@ -6,6 +6,25 @@
 
 menu "Person detection application"
 
+choice PERSON_DET_MODEL
+	prompt "Neural network model"
+	default PERSON_DET_MODEL_DETECTION
+
+config PERSON_DET_MODEL_DETECTION
+	bool "MCUnet person detection (160x128 input, bounding boxes)"
+
+config PERSON_DET_MODEL_CIFAR10_IC
+	bool "MLPerf Tiny ResNet-8 CIFAR-10 image classification (32x32 input)"
+	help
+	  Run the MLPerf Tiny image classification reference model
+	  (tiny/benchmark/training/image_classification) compiled for Axon.
+	  The 128x128 frame is box-averaged down to 32x32 and classified into
+	  one of the ten CIFAR-10 classes. CIFAR-10 has no person class.
+	  Set CONFIG_NRF_AXON_INTERLAYER_BUFFER_SIZE to at least 52224
+	  (see conf/model_cifar10_ic.conf).
+
+endchoice
+
 config PERSON_DET_STATIC_INPUT
 	bool "Use static tensor input (no ArduCam)"
 	help
@@ -14,9 +33,28 @@ config PERSON_DET_STATIC_INPUT
 	  "No detections"). Use this to verify Axon NPU bring-up without SPI
 	  or a level shifter.
 
+config PERSON_DET_HOST_INPUT
+	bool "Receive input frames from the host over UART"
+	depends on PERSON_DET_STATIC_INPUT
+	select RING_BUFFER
+	select CRC
+	help
+	  Receive RGB565 frames (host stream frame message) on the
+	  person-det,host-stream-uart UART and run inference on each one.
+	  Results are only written to the application log; nothing is sent
+	  back on the input UART. Requires CONFIG_UART_INTERRUPT_DRIVEN.
+	  With the CIFAR-10 model, the frame can be any multiple of 32x32
+	  up to 512x512; person detection needs 128x128.
+	  Use scripts/feed_images_uart.py on the host.
+
+config PERSON_DET_HOST_INPUT_RX_BUF_SIZE
+	int "Host input UART RX ring buffer size"
+	depends on PERSON_DET_HOST_INPUT
+	default 4096
+
 config PERSON_DET_STATIC_EMBEDDED_IMAGE
 	bool "Use embedded 128x128 RGB565 static frame"
-	depends on PERSON_DET_STATIC_INPUT
+	depends on PERSON_DET_STATIC_INPUT && !PERSON_DET_HOST_INPUT
 	default y
 	help
 	  Load src/generated/static_image_rgb565.h (regenerate with
@@ -24,7 +62,7 @@ config PERSON_DET_STATIC_EMBEDDED_IMAGE
 	  flat gray model input only (no RGB565 payload for host streaming).
 
 config PERSON_DET_HOST_STREAM
-	bool "Stream RGB565 frame + boxes over UART"
+	bool "Stream RGB565 frame + boxes or class scores over UART"
 	depends on PERSON_DET_STATIC_INPUT && PERSON_DET_STATIC_EMBEDDED_IMAGE
 	help
 	  Send the same binary protocol as app-axon USB viewer. UART is
@@ -54,6 +92,8 @@ config SCORE_THRESHOLD
 	help
 	  The confidence score threshold for each person detection.
 	  Detections with confidence scores below this threshold are filtered out.
+	  With the classification model, the detection LED is lit only when the
+	  top-1 class probability reaches this threshold.
 
 config IOU_THRESHOLD
 	int "Boxes IoU threshold, in per mille"

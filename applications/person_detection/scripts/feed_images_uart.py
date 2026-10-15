@@ -1,0 +1,206 @@
+#!/usr/bin/env python3
+"""
+Copyright (c) 2026 Nordic Semiconductor
+SPDX-License-Identifier: LicenseRef-Nordic-5-Clause
+
+Feed images to person_detection firmware built with CONFIG_PERSON_DET_HOST_INPUT.
+
+Each image is shown in a window and sent as an RGB565 frame message over the
+input UART (nRF9251 DK: VCOM1). The firmware logs the inference result on its
+console UART (VCOM0); nothing is sent back on the input UART.
+
+Image sources (combine as needed):
+  * image files or directories (PNG/JPEG/BMP)
+  * --axon-test-vectors HEADER   all int8 test inputs of a compiled Axon model header
+  * --cifar-test-batch FILE      CIFAR-10 python test batch (shows the true label)
+
+Keys in the window: space = send next image now, q = quit.
+
+Dependencies: pyserial, opencv-python, numpy, pillow
+"""
+from __future__ import annotations
+
+import argparse
+import pickle
+import random
+import re
+import sys
+import time
+from dataclasses import dataclass
+from pathlib import Path
+
+import cv2
+import numpy as np
+
+try:
+    import serial
+except ImportError as exc:
+    raise SystemExit("pyserial required: pip install pyserial") from exc
+
+from person_stream_protocol import encode_frame
+
+CIFAR10_LABELS = [
+    "airplane", "automobile", "bird", "cat", "deer",
+    "dog", "frog", "horse", "ship", "truck",
+]
+IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".bmp"}
+
+
+@dataclass
+class Sample:
+    name: str
+    rgb: np.ndarray  # HxWx3 uint8
+    truth: str | None = None
+
+
+def load_image_files(paths: list[Path]) -> list[Sample]:
+    try:
+        from PIL import Image
+    except ImportError as exc:
+        raise SystemExit("Install Pillow: pip install pillow") from exc
+
+    files: list[Path] = []
+    for p in paths:
+        if p.is_dir():
+            files.extend(sorted(f for f in p.iterdir() if f.suffix.lower() in IMAGE_SUFFIXES))
+        else:
+            files.append(p)
+
+    return [Sample(f.name, np.asarray(Image.open(f).convert("RGB"))) for f in files]
+
+
+def load_axon_test_vectors(header: Path) -> list[Sample]:
+    text = header.read_text(encoding="utf-8")
+    samples = []
+    for m in re.finditer(
+        r"(\w+)_test_input_vector_(\d+)\[3\]\[(\d+)\]\[(\d+)\]\s*=\s*\{(.*?)\};", text, re.DOTALL
+    ):
+        idx, h, w = int(m.group(2)), int(m.group(3)), int(m.group(4))
+        vals = np.array([int(v) for v in re.findall(r"-?\d+", m.group(5))], dtype=np.int16)
+        rgb = (vals.reshape(3, h, w).transpose(1, 2, 0) + 128).astype(np.uint8)
+        samples.append(Sample(f"{m.group(1)} test vector {idx}", rgb))
+    if not samples:
+        raise SystemExit(f"no [3][H][W] test input vectors found in {header}")
+    return samples
+
+
+def load_cifar_test_batch(path: Path, count: int, indices: list[int] | None) -> list[Sample]:
+    with path.open("rb") as f:
+        batch = pickle.load(f, encoding="bytes")
+    data = batch[b"data"].reshape(-1, 3, 32, 32).transpose(0, 2, 3, 1)
+    labels = batch[b"labels"]
+    if indices is None:
+        indices = random.sample(range(len(labels)), min(count, len(labels)))
+    return [Sample(f"CIFAR-10 test #{i}", data[i], CIFAR10_LABELS[labels[i]]) for i in indices]
+
+
+def to_rgb565_be(rgb: np.ndarray) -> bytes:
+    r = (rgb[:, :, 0].astype(np.uint16) >> 3) << 11
+    g = (rgb[:, :, 1].astype(np.uint16) >> 2) << 5
+    b = rgb[:, :, 2].astype(np.uint16) >> 3
+    return (r | g | b).astype(">u2").tobytes()
+
+
+def resize(rgb: np.ndarray, size: int) -> np.ndarray:
+    if rgb.shape[0] == size and rgb.shape[1] == size:
+        return rgb
+    h, w = rgb.shape[:2]
+    side = min(h, w)
+    top, left = (h - side) // 2, (w - side) // 2
+    square = rgb[top : top + side, left : left + side]
+    interp = cv2.INTER_AREA if side > size else cv2.INTER_NEAREST
+    return cv2.resize(square, (size, size), interpolation=interp)
+
+
+def show(window: str, sample: Sample, frame_id: int, sent_rgb: np.ndarray, scale: int) -> None:
+    disp = cv2.resize(sent_rgb, None, fx=scale, fy=scale, interpolation=cv2.INTER_NEAREST)
+    disp = cv2.cvtColor(disp, cv2.COLOR_RGB2BGR)
+    bar = np.zeros((60, disp.shape[1], 3), dtype=np.uint8)
+    cv2.putText(bar, f"#{frame_id} {sample.name}", (8, 22),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 1)
+    if sample.truth is not None:
+        cv2.putText(bar, f"truth: {sample.truth}", (8, 48),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 255, 0), 1)
+    cv2.imshow(window, np.vstack([disp, bar]))
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(description="Feed images to person_detection over UART")
+    ap.add_argument("images", nargs="*", type=Path, help="Image files or directories")
+    ap.add_argument("--port", default="/dev/ttyACM1", help="Input UART (nRF9251 DK: VCOM1)")
+    ap.add_argument("--baud", type=int, default=115200)
+    ap.add_argument("--rtscts", action=argparse.BooleanOptionalAction, default=False)
+    ap.add_argument("--size", type=int, default=32,
+                    help="Frame size sent to the device (CIFAR-10 model: multiple of 32)")
+    ap.add_argument("--interval", type=float, default=2.0, help="Seconds between images")
+    ap.add_argument("--loop", action="store_true", help="Repeat the image list forever")
+    ap.add_argument("--shuffle", action="store_true")
+    ap.add_argument("--axon-test-vectors", type=Path, metavar="HEADER")
+    ap.add_argument("--cifar-test-batch", type=Path, metavar="FILE",
+                    help="cifar-10-batches-py/test_batch")
+    ap.add_argument("--count", type=int, default=20, help="Random CIFAR-10 samples to send")
+    ap.add_argument("--indices", type=lambda s: [int(v) for v in s.split(",")],
+                    help="Comma-separated CIFAR-10 test indices instead of random samples")
+    ap.add_argument("--scale", type=int, default=0, help="Display upscale (default: auto)")
+    args = ap.parse_args()
+
+    samples: list[Sample] = []
+    if args.images:
+        samples += load_image_files(args.images)
+    if args.axon_test_vectors:
+        samples += load_axon_test_vectors(args.axon_test_vectors)
+    if args.cifar_test_batch:
+        samples += load_cifar_test_batch(args.cifar_test_batch, args.count, args.indices)
+    if not samples:
+        ap.error("no images: pass files/directories, --axon-test-vectors or --cifar-test-batch")
+
+    try:
+        ser = serial.Serial(args.port, args.baud, timeout=1, rtscts=args.rtscts)
+    except serial.SerialException as exc:
+        print(f"Cannot open {args.port}: {exc}", file=sys.stderr)
+        return 1
+
+    scale = args.scale or max(1, 384 // args.size)
+    window = "Image fed to device"
+    frame_id = 0
+    print(f"Sending {len(samples)} image(s) as {args.size}x{args.size} RGB565 to {args.port} "
+          f"@ {args.baud}. Watch the device console for results. Keys: space=next, q=quit.")
+
+    try:
+        while True:
+            order = list(samples)
+            if args.shuffle:
+                random.shuffle(order)
+            for sample in order:
+                frame_id += 1
+                rgb = resize(sample.rgb, args.size)
+                show(window, sample, frame_id, rgb, scale)
+                cv2.waitKey(1)
+
+                t0 = time.monotonic()
+                ser.write(encode_frame(frame_id, args.size, args.size, to_rgb565_be(rgb)))
+                ser.flush()
+                truth = f" (truth: {sample.truth})" if sample.truth else ""
+                print(f"#{frame_id} {sample.name}{truth} sent in {time.monotonic() - t0:.2f} s")
+
+                deadline = t0 + args.interval
+                while True:
+                    key = cv2.waitKey(max(1, int((deadline - time.monotonic()) * 1000))) & 0xFF
+                    if key == ord("q"):
+                        return 0
+                    if key == ord(" ") or time.monotonic() >= deadline:
+                        break
+            if not args.loop:
+                break
+        cv2.waitKey(0)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        ser.close()
+        cv2.destroyAllWindows()
+
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -221,6 +221,55 @@ python3 applications/person_detection/scripts/view_person_stream.py --port /dev/
 
 Watch logs on **ACM0** at **115200** (dual build only). Press **q** in the viewer to quit.
 
+### CIFAR-10 image classification instead of person detection
+
+`conf/model_cifar10_ic.conf` swaps MCUnet person detection for the MLPerf Tiny ResNet-8 CIFAR-10 classifier (`tiny/benchmark/training/image_classification`, compiled for Axon as `src/generated/nrf_axon_model_tinyml_ic_.h`). The 128×128 frame is box-averaged to 32×32. Instead of boxes, the firmware logs and streams the probability of each of the ten classes (airplane, automobile, bird, cat, deer, dog, frog, horse, ship, truck). CIFAR-10 has **no person class**.
+
+| | Person detection | CIFAR-10 classification |
+|---|---|---|
+| Model input | 160×128×3 | 32×32×3 |
+| Axon interlayer buffer | 229,376 B | 52,224 B |
+| App RAM used (static dual build) | ~339 KiB (97%) | ~102 KiB (29%) |
+
+To check the full pipeline with a known answer, embed one of the compiled model's CIFAR-10 test images. Vector 1 is an automobile:
+
+```bash
+python3 applications/person_detection/scripts/embed_static_image.py \
+  --axon-test-vector tests/axon/compiled_models/nrf_axon_model_tinyml_ic_test_vectors_.h:1
+west build -b nrf9251dk/nrf9251/cpuapp applications/person_detection -- \
+  -DEXTRA_CONF_FILE="conf/static_input_host_dual.conf;conf/model_cifar10_ic.conf" \
+  -DDTC_OVERLAY_FILE="boards/nrf9251dk_nrf9251_cpuapp_static_input.overlay;boards/nrf9251dk_nrf9251_cpuapp_static_host_dual.overlay"
+west flash
+```
+
+The log on VCOM0 should show `Class 1: AUTOMOBILE (...)` with close to 100% (the reference output for this vector). The viewer prints each result and draws the top-3 classes over the frame.
+
+### Feed images from the PC over UART (demo)
+
+With `conf/host_input_dual.conf`, the firmware receives frames on **VCOM1** (RX only) and writes only to the log on **VCOM0**. Frames use the same RGB565 frame message as the viewer stream. With the CIFAR-10 model, any square multiple of 32×32 works (32×32 is about 2 KB, so about 0.2 s at 115200). Person detection needs 128×128.
+
+```bash
+west build -b nrf9251dk/nrf9251/cpuapp applications/person_detection -- \
+  -DEXTRA_CONF_FILE="conf/host_input_dual.conf;conf/model_cifar10_ic.conf" \
+  -DDTC_OVERLAY_FILE="boards/nrf9251dk_nrf9251_cpuapp_static_input.overlay;boards/nrf9251dk_nrf9251_cpuapp_static_host_dual.overlay"
+west flash
+```
+
+Watch the log on VCOM0, then feed images on VCOM1. The script shows each image as it is sent:
+
+```bash
+# The model's CIFAR-10 test vectors:
+python3 applications/person_detection/scripts/feed_images_uart.py --port /dev/ttyACM1 \
+  --axon-test-vectors tests/axon/compiled_models/nrf_axon_model_tinyml_ic_test_vectors_.h --loop
+# Your own photos (center-cropped and resized to --size):
+python3 applications/person_detection/scripts/feed_images_uart.py --port /dev/ttyACM1 photos/
+# Random CIFAR-10 test images, with the true label shown in the window:
+python3 applications/person_detection/scripts/feed_images_uart.py --port /dev/ttyACM1 \
+  --cifar-test-batch cifar-10-batches-py/test_batch --count 20
+```
+
+Each frame is logged as `Frame N (32x32) received` followed by `Class K: LABEL (xx.x%)`. Frames that fail the CRC check or have an unsupported size are dropped with a warning.
+
 ---
 
 ## Troubleshooting

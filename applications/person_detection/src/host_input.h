@@ -1,0 +1,34 @@
+/*
+ * Copyright (c) 2026 Nordic Semiconductor ASA
+ * SPDX-License-Identifier: LicenseRef-Nordic-5-Clause
+ *
+ * Receive RGB565 frames from the host over UART (same frame message as host_stream).
+ */
+
+#pragma once
+
+#include <stddef.h>
+#include <stdint.h>
+
+struct host_input_handler {
+	/** Called when a frame header arrives. Return non-zero to reject the frame. */
+	int (*begin)(uint16_t width, uint16_t height);
+	/** Called with consecutive RGB565 big-endian pixels of the current frame. */
+	void (*pixels)(const uint8_t *rgb565_be, size_t pixel_start, size_t pixel_count);
+};
+
+int host_input_init(void);
+
+/**
+ * @brief Block until one complete frame with a valid CRC has been received.
+ *
+ * Frames that are rejected by @p handler->begin or fail the CRC check are
+ * dropped and reception continues.
+ *
+ * @param handler Frame callbacks.
+ * @param[out] frame_id Host frame ID of the received frame.
+ * @param[out] width Frame width.
+ * @param[out] height Frame height.
+ */
+void host_input_receive_frame(const struct host_input_handler *handler, uint32_t *frame_id,
+			      uint16_t *width, uint16_t *height);

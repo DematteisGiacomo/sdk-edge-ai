@@ -1,0 +1,39 @@
+/*
+ * Copyright (c) 2026 Nordic Semiconductor ASA
+ * SPDX-License-Identifier: LicenseRef-Nordic-5-Clause
+ *
+ * nRF9251 DK:
+ *   uart133 (P1.5/P1.6) -> J-Link VCOM0: application log and results (zephyr,console)
+ *   uart132 (P2.4/P2.5) -> J-Link VCOM1: frame input from the host, RX only
+ *
+ * Do not use uart120 (P5.2/P5.3) here: those pins are shared with TPIU/coresight on
+ * this board (see nrf9251dk_nrf9251-pinctrl.dtsi tpiu_default).
+ */
+
+/ {
+	chosen {
+		img-class,host-uart = &uart132;
+	};
+};
+
+&axon {
+	status = "okay";
+};
+
+&gpio1 {
+	status = "okay";
+};
+
+&gpio2 {
+	status = "okay";
+};
+
+&gpiote130 {
+	status = "okay";
+};
+
+&uart132 {
+	status = "okay";
+	current-speed = <115200>;
+	memory-regions = <&cpuapp_dma_region>;
+};

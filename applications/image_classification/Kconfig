@@ -1,0 +1,48 @@
+#
+# Copyright (c) 2026 Nordic Semiconductor ASA
+#
+# SPDX-License-Identifier: LicenseRef-Nordic-5-Clause
+#
+
+menu "Image classification application"
+
+choice IMG_CLASS_MODEL
+	prompt "Neural network model"
+	default IMG_CLASS_MODEL_CIFAR10
+
+config IMG_CLASS_MODEL_CIFAR10
+	bool "MLPerf Tiny ResNet-8 CIFAR-10 image classification (32x32 input)"
+	help
+	  Classify the frame into one of the ten CIFAR-10 classes: airplane,
+	  automobile, bird, cat, deer, dog, frog, horse, ship, truck.
+
+config IMG_CLASS_MODEL_VWW
+	bool "MLPerf Tiny Visual Wake Words person classification (96x96 input)"
+	help
+	  Classify the frame as PERSON or NON_PERSON with the MobileNetV1 0.25
+	  Visual Wake Words reference model.
+
+endchoice
+
+config IMG_CLASS_SCORE_THRESHOLD
+	int "Detection LED threshold, in per mille"
+	range 0 1000
+	default 500
+	help
+	  The detection LED is lit when the top-1 class probability reaches
+	  this threshold.
+
+config IMG_CLASS_RX_BUF_SIZE
+	int "Host input UART RX ring buffer size"
+	default 4096
+	help
+	  Bytes buffered between the UART interrupt and the frame parser.
+
+config NRF_AXON_INTERLAYER_BUFFER_SIZE
+	int
+	default 52224 if IMG_CLASS_MODEL_CIFAR10
+	default 46080 if IMG_CLASS_MODEL_VWW
+
+endmenu
+
+source "Kconfig.zephyr"

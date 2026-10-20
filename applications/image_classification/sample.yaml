@@ -29,3 +29,11 @@ tests:
       - nrf9251dk/nrf9251/cpuapp
     integration_platforms:
       - nrf9251dk/nrf9251/cpuapp
+
+  applications.image_classification.wildfire:
+    extra_args:
+      - EXTRA_CONF_FILE="wildfire.conf"
+    platform_allow:
+      - nrf9251dk/nrf9251/cpuapp
+    integration_platforms:
+      - nrf9251dk/nrf9251/cpuapp

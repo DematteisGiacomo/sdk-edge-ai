@@ -22,6 +22,13 @@ config IMG_CLASS_MODEL_VWW
 	  Classify the frame as PERSON or NON_PERSON with the MobileNetV1 0.25
 	  Visual Wake Words reference model.
 
+config IMG_CLASS_MODEL_WILDFIRE
+	bool "Wildfire image classification (96x96 input)"
+	help
+	  Classify the frame as FIRE or NO_FIRE with a MobileNetV1 0.25 model
+	  fine-tuned on The Wildfire Dataset (forest scenes with and without
+	  flames or smoke).
+
 endchoice
 
 config IMG_CLASS_SCORE_THRESHOLD
@@ -42,6 +49,7 @@ config NRF_AXON_INTERLAYER_BUFFER_SIZE
 	int
 	default 52224 if IMG_CLASS_MODEL_CIFAR10
 	default 46080 if IMG_CLASS_MODEL_VWW
+	default 46080 if IMG_CLASS_MODEL_WILDFIRE
 
 endmenu
 

@@ -26,15 +26,26 @@
 #define MODEL_HEIGHT      32
 #define MODEL_OUTPUT_SIZE NRF_AXON_MODEL_TINYML_IC_PACKED_OUTPUT_SIZE
 /* Model input is raw 0..255 pixel values. */
-#define INPUT_PIXEL_SCALE 1.0f
+#define INPUT_PIXEL_SCALE  1.0f
+#define INPUT_PIXEL_OFFSET 0.0f
 #elif IS_ENABLED(CONFIG_IMG_CLASS_MODEL_VWW)
 #include "generated/nrf_axon_model_tinyml_vww_.h"
-#define AXON_MODEL        model_tinyml_vww
-#define MODEL_WIDTH       96
-#define MODEL_HEIGHT      96
-#define MODEL_OUTPUT_SIZE NRF_AXON_MODEL_TINYML_VWW_PACKED_OUTPUT_SIZE
+#define AXON_MODEL         model_tinyml_vww
+#define MODEL_WIDTH        96
+#define MODEL_HEIGHT       96
+#define MODEL_OUTPUT_SIZE  NRF_AXON_MODEL_TINYML_VWW_PACKED_OUTPUT_SIZE
 /* Model input is pixel / 255. */
-#define INPUT_PIXEL_SCALE (1.0f / 255.0f)
+#define INPUT_PIXEL_SCALE  (1.0f / 255.0f)
+#define INPUT_PIXEL_OFFSET 0.0f
+#elif IS_ENABLED(CONFIG_IMG_CLASS_MODEL_WILDFIRE)
+#include "generated/nrf_axon_model_wildfire_.h"
+#define AXON_MODEL         model_wildfire
+#define MODEL_WIDTH        96
+#define MODEL_HEIGHT       96
+#define MODEL_OUTPUT_SIZE  NRF_AXON_MODEL_WILDFIRE_PACKED_OUTPUT_SIZE
+/* Model input is pixel / 127.5 - 1 (ImageNet MobileNet preprocessing). */
+#define INPUT_PIXEL_SCALE  (1.0f / 127.5f)
+#define INPUT_PIXEL_OFFSET (-1.0f)
 #endif
 
 /* downscale_acc is uint16_t: at most 16x16 source pixels of 255 per bin. */
@@ -134,7 +145,7 @@ static void input_frame_end(const nrf_axon_nn_compiled_model_input_s *in)
 			const uint32_t avg = (downscale_acc[c][i] + (area / 2)) / area;
 
 			input_buf[c * MODEL_WIDTH * MODEL_HEIGHT + i] =
-				quantize((float)avg * INPUT_PIXEL_SCALE, in);
+				quantize((float)avg * INPUT_PIXEL_SCALE + INPUT_PIXEL_OFFSET, in);
 		}
 	}
 }

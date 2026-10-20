@@ -48,7 +48,7 @@ VERSION = 1
 TYPE_FRAME = 0x01
 
 # Square frame size sent by default for each firmware model (its input size).
-MODEL_FRAME_SIZE = {"cifar10": 32, "vww": 96}
+MODEL_FRAME_SIZE = {"cifar10": 32, "vww": 96, "wildfire": 96}
 
 CIFAR10_LABELS = [
     "airplane", "automobile", "bird", "cat", "deer",
@@ -66,7 +66,7 @@ class Sample:
 
 def load_image_files(paths: list[Path]) -> list[Sample]:
     try:
-        from PIL import Image
+        from PIL import Image, ImageOps
     except ImportError as exc:
         raise SystemExit("Install Pillow: pip install pillow") from exc
 
@@ -77,7 +77,8 @@ def load_image_files(paths: list[Path]) -> list[Sample]:
         else:
             files.append(p)
 
-    return [Sample(f.name, np.asarray(Image.open(f).convert("RGB"))) for f in files]
+    return [Sample(f.name, np.asarray(ImageOps.exif_transpose(Image.open(f)).convert("RGB")))
+            for f in files]
 
 
 def load_axon_test_vectors(header: Path) -> list[Sample]:

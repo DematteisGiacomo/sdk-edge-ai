@@ -16,7 +16,7 @@ The application receives RGB565 frames from the host on a dedicated input UART, 
 No camera is required.
 Nothing is sent back on the input UART, so a host script can show each image while the device console shows the classification result.
 
-You can build the application with one of the following MLPerf Tiny models:
+You can build the application with one of the following models:
 
 .. list-table::
    :header-rows: 1
@@ -33,6 +33,15 @@ You can build the application with one of the following MLPerf Tiny models:
      - :kconfig:option:`CONFIG_IMG_CLASS_MODEL_VWW`
      - 96×96 RGB
      - non-person, person
+   * - Wildfire (``wildfire``)
+     - :kconfig:option:`CONFIG_IMG_CLASS_MODEL_WILDFIRE`
+     - 96×96 RGB
+     - no fire, fire
+
+The CIFAR-10 and Visual Wake Words models are the MLPerf Tiny reference models.
+The wildfire model is a MobileNetV1 0.25 (the Visual Wake Words backbone) fine-tuned from ImageNet weights on `The Wildfire Dataset <https://www.kaggle.com/datasets/elmadafri/the-wildfire-dataset>`_ (CC BY 4.0), a set of forest images with and without flames or smoke.
+It classifies 88.8% of the 410 held-out test images correctly after int8 quantization.
+The training, quantization, and Axon compilation pipeline is available in the `wildfire_axon <https://github.com/DematteisGiacomo/wildfire_axon>`_ repository.
 
 The frames received from the host are not stored in full.
 Pixels are box-filtered into the model input buffer while they arrive, so the host can send square frames from the model input size up to 16 times that size, for example 32×32 to 512×512 for CIFAR-10.
@@ -81,7 +90,7 @@ Configuration options
 
 .. _CONFIG_IMG_CLASS_MODEL:
 
-CONFIG_IMG_CLASS_MODEL_CIFAR10 / CONFIG_IMG_CLASS_MODEL_VWW
+CONFIG_IMG_CLASS_MODEL_CIFAR10 / CONFIG_IMG_CLASS_MODEL_VWW / CONFIG_IMG_CLASS_MODEL_WILDFIRE
    Selects the model.
    The Axon interlayer buffer size (:kconfig:option:`CONFIG_NRF_AXON_INTERLAYER_BUFFER_SIZE`) follows the selected model.
 
@@ -100,6 +109,7 @@ Configuration files
 
 * :file:`prj.conf` - Default configuration, using the CIFAR-10 model.
 * :file:`vww.conf` - Selects the Visual Wake Words model. Use it with ``EXTRA_CONF_FILE``.
+* :file:`wildfire.conf` - Selects the wildfire model. Use it with ``EXTRA_CONF_FILE``.
 
 Building and running
 ********************
@@ -120,6 +130,13 @@ To build with the Visual Wake Words model, run:
 .. code-block:: console
 
    west build -p -b nrf9251dk/nrf9251/cpuapp applications/image_classification -- -DEXTRA_CONF_FILE=vww.conf
+   west flash
+
+To build with the wildfire model, run:
+
+.. code-block:: console
+
+   west build -p -b nrf9251dk/nrf9251/cpuapp applications/image_classification -- -DEXTRA_CONF_FILE=wildfire.conf
    west flash
 
 Testing
@@ -155,7 +172,14 @@ Testing
       python3 applications/image_classification/scripts/feed_images_uart.py --model vww \
          --port /dev/serial/by-id/usb-SEGGER_J-Link_<serial>-if02 --loop path/to/images/
 
-   Use ``--size`` to send larger frames, for example ``--size 128`` for CIFAR-10 or ``--size 192`` for Visual Wake Words.
+   For the wildfire model, using forest pictures with and without fire or smoke:
+
+   .. code-block:: console
+
+      python3 applications/image_classification/scripts/feed_images_uart.py --model wildfire \
+         --port /dev/serial/by-id/usb-SEGGER_J-Link_<serial>-if02 --loop path/to/forest/images/
+
+   Use ``--size`` to send larger frames, for example ``--size 128`` for CIFAR-10 or ``--size 192`` for the 96×96 models.
    Larger frames take longer to transfer at 115200 baud.
 
 #. Observe the image shown by the script and the classification result on the console.
@@ -173,6 +197,23 @@ The following is an example output for the CIFAR-10 model:
    <inf> main: Frame 2 (32x32) received
    <inf> main: Class 1: AUTOMOBILE (100.0%)
 
+The following is an example output for the wildfire model:
+
+.. code-block:: console
+
+   <inf> main: Host input on uart@9b5000 (RX only)
+   <inf> main: Model wildfire (96x96) waiting for frames from host
+   <inf> main: Frame 1238 (96x96) received
+   <inf> main: Class 1: FIRE (99.5%)
+   <inf> main: Frame 1240 (96x96) received
+   <inf> main: Class 0: NO_FIRE (99.7%)
+
+The following animation shows the wildfire model on the nRF9251 DK, with the device console on the left and the feeder script on the right.
+The feeder window shows the original image and the 96×96 frame sent to the device:
+
+.. figure:: images/wildfire_classification_demo.gif
+   :alt: Wildfire classification on the nRF9251 DK with images fed over UART
+
 Memory footprint
 ================
 
@@ -189,6 +230,9 @@ The following table shows the memory usage on the nRF9251 DK application core:
      - 75168 B (21%)
    * - Visual Wake Words
      - 335908 B (74%)
+     - 142816 B (40%)
+   * - Wildfire
+     - 335956 B (74%)
      - 142816 B (40%)
 
 Dependencies

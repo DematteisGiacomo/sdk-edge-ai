@@ -40,7 +40,7 @@ You can build the application with one of the following models:
 
 The CIFAR-10 and Visual Wake Words models are the MLPerf Tiny reference models.
 The wildfire model is a MobileNetV1 0.25 (the Visual Wake Words backbone) fine-tuned from ImageNet weights on `The Wildfire Dataset <https://www.kaggle.com/datasets/elmadafri/the-wildfire-dataset>`_ (CC BY 4.0), a set of forest images with and without flames or smoke.
-It classifies 88.8% of the 410 held-out test images correctly after int8 quantization.
+It classifies 92.4% of the 410 held-out test images correctly after int8 quantization.
 The training, quantization, and Axon compilation pipeline is available in the `wildfire_axon <https://github.com/DematteisGiacomo/wildfire_axon>`_ repository.
 
 The frames received from the host are not stored in full.

@@ -1,0 +1,29 @@
+#
+# Copyright (c) 2026 Nordic Semiconductor ASA
+#
+# SPDX-License-Identifier: LicenseRef-Nordic-5-Clause
+#
+
+menu "Wildfire classification application"
+
+config WILDFIRE_SCORE_THRESHOLD
+	int "Fire LED threshold, in per mille"
+	range 0 1000
+	default 500
+	help
+	  The fire LED is lit when the FIRE class probability reaches this
+	  threshold.
+
+config WILDFIRE_RX_BUF_SIZE
+	int "Host input UART RX ring buffer size"
+	default 4096
+	help
+	  Bytes buffered between the UART interrupt and the frame parser.
+
+config NRF_AXON_INTERLAYER_BUFFER_SIZE
+	int
+	default 46080
+
+endmenu
+
+source "Kconfig.zephyr"

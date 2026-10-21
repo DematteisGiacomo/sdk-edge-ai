@@ -28,7 +28,7 @@ LOG_MODULE_DECLARE(main);
 static const struct device *const input_uart =
 	DEVICE_DT_GET(DT_CHOSEN(img_class_host_uart));
 
-RING_BUF_DECLARE(rx_ring, CONFIG_IMG_CLASS_RX_BUF_SIZE);
+RING_BUF_DECLARE(rx_ring, CONFIG_WILDFIRE_RX_BUF_SIZE);
 static K_SEM_DEFINE(rx_sem, 0, 1);
 static atomic_t rx_dropped;
 

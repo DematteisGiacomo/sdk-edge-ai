@@ -19,26 +19,8 @@
 #include "classification.h"
 #include "host_input.h"
 
-#if IS_ENABLED(CONFIG_IMG_CLASS_MODEL_CIFAR10)
-#include "generated/nrf_axon_model_tinyml_ic_.h"
-#define AXON_MODEL        model_tinyml_ic
-#define MODEL_WIDTH       32
-#define MODEL_HEIGHT      32
-#define MODEL_OUTPUT_SIZE NRF_AXON_MODEL_TINYML_IC_PACKED_OUTPUT_SIZE
-/* Model input is raw 0..255 pixel values. */
-#define INPUT_PIXEL_SCALE  1.0f
-#define INPUT_PIXEL_OFFSET 0.0f
-#elif IS_ENABLED(CONFIG_IMG_CLASS_MODEL_VWW)
-#include "generated/nrf_axon_model_tinyml_vww_.h"
-#define AXON_MODEL         model_tinyml_vww
-#define MODEL_WIDTH        96
-#define MODEL_HEIGHT       96
-#define MODEL_OUTPUT_SIZE  NRF_AXON_MODEL_TINYML_VWW_PACKED_OUTPUT_SIZE
-/* Model input is pixel / 255. */
-#define INPUT_PIXEL_SCALE  (1.0f / 255.0f)
-#define INPUT_PIXEL_OFFSET 0.0f
-#elif IS_ENABLED(CONFIG_IMG_CLASS_MODEL_WILDFIRE)
 #include "generated/nrf_axon_model_wildfire_.h"
+
 #define AXON_MODEL         model_wildfire
 #define MODEL_WIDTH        96
 #define MODEL_HEIGHT       96
@@ -46,7 +28,8 @@
 /* Model input is pixel / 127.5 - 1 (ImageNet MobileNet preprocessing). */
 #define INPUT_PIXEL_SCALE  (1.0f / 127.5f)
 #define INPUT_PIXEL_OFFSET (-1.0f)
-#endif
+/* Output classes: 0 = NO_FIRE, 1 = FIRE. */
+#define FIRE_CLASS_IDX     1
 
 /* downscale_acc is uint16_t: at most 16x16 source pixels of 255 per bin. */
 #define MAX_DOWNSCALE 16
@@ -177,7 +160,8 @@ static int classify(const nrf_axon_nn_compiled_model_s *model)
 
 	const float top = res.probs[res.class_idx];
 
-	(void)gpio_pin_set_dt(&led_result, (top * 1000.f) >= CONFIG_IMG_CLASS_SCORE_THRESHOLD);
+	(void)gpio_pin_set_dt(&led_result,
+			      (res.probs[FIRE_CLASS_IDX] * 1000.f) >= CONFIG_WILDFIRE_SCORE_THRESHOLD);
 	LOG_INF("Class %d: %s (%.1f%%)", res.class_idx, res.label, (double)(top * 100.f));
 
 	return 0;
